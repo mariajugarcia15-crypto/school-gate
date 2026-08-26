@@ -1,0 +1,134 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(PORTERO)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  logs      AccessLog[]
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  SECRETARIA
+  PORTERO
+}
+
+model Student {
+  id        String   @id @default(uuid())
+  name      String
+  grade     String
+  section   String
+  photoUrl  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vehicleLinks    VehicleStudent[]
+  temporaryPerms  TemporaryPermit[]
+  logs            AccessLog[]
+
+  @@map("students")
+}
+
+model Vehicle {
+  id           String   @id @default(uuid())
+  plate        String   @unique
+  brand        String?
+  model        String?
+  color        String?
+  ownerName    String
+  ownerPhone   String?
+  ownerDni     String?
+  vehicleType  VehicleType @default(CAR)
+  photoUrl     String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  students        VehicleStudent[]
+  temporaryPerms  TemporaryPermit[]
+  logs            AccessLog[]
+
+  @@map("vehicles")
+}
+
+enum VehicleType {
+  CAR
+  MOTORCYCLE
+  VAN
+  BUS
+}
+
+model VehicleStudent {
+  id         String   @id @default(uuid())
+  vehicleId  String
+  studentId  String
+  isMain     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([vehicleId, studentId])
+  @@map("vehicle_students")
+}
+
+model TemporaryPermit {
+  id          String   @id @default(uuid())
+  vehicleId   String
+  studentId   String
+  validDate   DateTime
+  reason      String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  used        Boolean  @default(false)
+  usedAt      DateTime?
+
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  student     Student  @relation(fields: [studentId], references: [id])
+
+  @@map("temporary_permits")
+}
+
+model AccessLog {
+  id          String     @id @default(uuid())
+  vehicleId   String?
+  plate       String
+  eventType   EventType  @default(EXIT)
+  photoUrl    String?
+  ocrRaw      String?
+  confidence  Float?
+  authorized  Boolean    @default(true)
+  notes       String?
+  registeredBy String?
+  createdAt   DateTime   @default(now())
+
+  vehicle     Vehicle?   @relation(fields: [vehicleId], references: [id])
+  students    Student[]
+  user        User?      @relation(fields: [registeredBy], references: [id])
+
+  @@map("access_logs")
+}
+
+enum EventType {
+  ENTRY
+  EXIT
+  DENIED
+}
