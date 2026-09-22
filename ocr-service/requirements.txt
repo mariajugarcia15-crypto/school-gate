@@ -1,0 +1,8 @@
+# CPU only; the RapidOCR wheel includes the PP-OCR models.
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.19.2
+numpy==1.26.4
+opencv-python==4.11.0.86
+Pillow==11.2.1
+fastapi==0.115.12
+uvicorn==0.34.2

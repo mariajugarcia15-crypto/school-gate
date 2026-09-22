@@ -1,1 +1,5 @@
 node_modules/
+ocr-service/.venv/
+__pycache__/
+*.pyc
+frontend-web/build/

@@ -11,142 +11,161 @@ export default function GatePage() {
   const webcamRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
 
-const lastDetectedPlates = useRef(new Map());
-const DUPLICATE_TIME = 5 * 60 * 1000; // 5 minutos
-
+  const inFlight = useRef(false);
+  const generation = useRef(0);
+  const previousReading = useRef(null);
+  const [cropCenter, setCropCenter] = useState(false);
+  const [ocrMessage, setOcrMessage] = useState('');
   const [manualPlate, setManualPlate] = useState('');
   const [searching, setSearching] = useState(false);
   const [result, setResult] = useState(EMPTY_RESULT);
   const [confirming, setConfirming] = useState(false);
   const [ocrConfidence, setOcrConfidence] = useState(null);
 
-const searchPlate = async (plate) => {
-  if (!plate.trim()) return null;
-  setSearching(true);
-  setResult(EMPTY_RESULT);
-  try {
-    const res = await vehicleService.getByPlate(
-      plate.trim().toUpperCase()
-    );
-    const newResult = {
-      ...res.data,
-      plate: plate.toUpperCase(),
-    };
-    setResult(newResult);
-    return newResult;
-  } catch (err) {
-    if (err.response?.status === 404) {
-      const newResult = {
-        found: false,
-        plate: plate.toUpperCase(),
-        vehicle: null,
-        tempPermits: [],
-      };
+  useEffect(() => () => { generation.current += 1; }, []);
+
+  const searchPlate = useCallback(async (plate) => {
+    const normalized = plate.trim().toUpperCase().replace(/\s/g, '');
+    if (!normalized) return null;
+    generation.current += 1;
+    previousReading.current = null;
+    setCameraActive(false);
+    setSearching(true);
+    setResult(EMPTY_RESULT);
+    try {
+      const res = await vehicleService.getByPlate(normalized);
+      const newResult = { ...res.data, plate: normalized };
       setResult(newResult);
       return newResult;
-    } else {
+    } catch (err) {
+      if (err.response?.status === 404) {
+        const newResult = { ...EMPTY_RESULT, plate: normalized };
+        setResult(newResult);
+        return newResult;
+      }
       toast.error('Error consultando la placa');
       return null;
+    } finally {
+      setSearching(false);
     }
-  } finally {
-    setSearching(false);
-  }
-};
+  }, []);
 
-const captureAndRecognize = useCallback(async () => {
-  if (searching || confirming) return;
-  const imageSrc = webcamRef.current?.getScreenshot();
-  if (!imageSrc) return;
-  setSearching(true);
-  try {
-    const formData = new FormData();
-    formData.append('imageBase64', imageSrc);
-    const ocrRes = await ocrService.recognize(formData);
-    const {
-      plate,
-      confidence,
-      ocrConfidence: conf
-    } = ocrRes.data;
-    if (!plate) {
-      return;
+  const captureAndRecognize = useCallback(async (automatic = false) => {
+    if (inFlight.current || searching || confirming) return;
+    let imageSrc = webcamRef.current?.getScreenshot();
+    if (!imageSrc) return;
+    if (cropCenter) {
+      const video = webcamRef.current?.video;
+      if (!video?.videoWidth || !video?.videoHeight) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(video.videoWidth * 0.8);
+      canvas.height = Math.round(video.videoHeight * 0.4);
+      canvas.getContext('2d').drawImage(video,
+        video.videoWidth * 0.1, video.videoHeight * 0.3,
+        canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+      imageSrc = canvas.toDataURL('image/jpeg', 0.95);
     }
-    const normalizedPlate = plate
-      .trim()
-      .toUpperCase()
-      .replace(/\s/g, '');
-    setOcrConfidence({
-      text: confidence,
-      value: conf
-    });
-    console.log('Placa detectada:', normalizedPlate);
-    // Buscar automáticamente el vehículo
-    const foundResult = await searchPlate(normalizedPlate);
-    if (!foundResult) {
-      return;
+    const currentGeneration = generation.current;
+    inFlight.current = true;
+    setSearching(true);
+    setResult(EMPTY_RESULT);
+    try {
+      const formData = new FormData();
+      formData.append('imageBase64', imageSrc);
+      const { data } = await ocrService.recognize(formData);
+      if (currentGeneration !== generation.current) return;
+      setOcrConfidence({ text: data.confidence, value: data.ocrConfidence });
+      if (data.status !== 'recognized' || !data.plate) {
+        previousReading.current = null;
+        if (data.status === 'ambiguous') {
+          setCameraActive(false);
+          setOcrMessage('Hay varias placas posibles. Enfoca un solo vehículo o escribe la placa.');
+          setManualPlate('');
+        } else if (data.candidates?.length === 1) {
+          setCameraActive(false);
+          setManualPlate(data.candidates[0].plate);
+          setOcrMessage('Lectura dudosa. Revisa y corrige la placa antes de pulsar Buscar.');
+        } else {
+          setManualPlate('');
+          setOcrMessage('No se pudo leer la placa. Acerca la cámara, mejora la luz o ingrésala manualmente.');
+        }
+        return;
+      }
+      // setManualPlate(data.plate);
+      // const previous = previousReading.current;
+      // previousReading.current = { plate: data.plate, time: Date.now() };
+      // if (automatic && (!previous || previous.plate !== data.plate || Date.now() - previous.time > 15000)) {
+      //   setOcrMessage(`Lectura: ${data.plate}. Esperando otra captura coincidente…`);
+      //   return;
+      // }
+      // setOcrMessage(`Placa leída: ${data.plate}. Verifica el vehículo y confirma la acción.`);
+      // // OCR identifies a candidate; the operator confirms or denies the exit.
+      // await searchPlate(data.plate);
+    } catch (err) {
+      if (currentGeneration !== generation.current) return;
+      previousReading.current = null;
+      setOcrConfidence(null);
+      setOcrMessage(err.response?.data?.error || 'No se pudo conectar con el lector local.');
+      if (err.response?.status !== 429) setCameraActive(false);
+    } finally {
+      inFlight.current = false;
+      setSearching(false);
     }
-    // Si el vehículo está registrado/autorizado
-    if (foundResult.found) {
-      console.log(
-        `Vehículo autorizado: ${normalizedPlate}`
-      );
-      await confirmExit(true, foundResult);
-    } else {
-      console.log(
-        `Vehículo no autorizado: ${normalizedPlate}`
-      );
-      await confirmExit(false, foundResult);
-    }
-  } catch (err) {
-    console.error('Error en reconocimiento automático:', err);
-  } finally {
-    setSearching(false);
-  }
-}, [searching, confirming, searchPlate]);
+  }, [searching, confirming, cropCenter, searchPlate]);
 
-    useEffect(() => {
+  useEffect(() => {
     if (!cameraActive) return;
-    const interval = setInterval(() => {
-      captureAndRecognize();
-    }, 2000);
+    const interval = setInterval(() => captureAndRecognize(true), 2000);
     return () => clearInterval(interval);
   }, [cameraActive, captureAndRecognize]);
-const confirmExit = async (authorized, currentResult = result) => {
-  if (!currentResult.plate) return;
-  setConfirming(true);
-  try {
-    const allStudents = [
-      ...(currentResult.vehicle?.students?.map(vs => vs.student) || []),
-      ...(currentResult.tempPermits?.map(p => p.student) || []),
-    ];
-    const uniqueStudents = [
-      ...new Map(allStudents.map(s => [s.id, s])).values()
-    ];
-    const formData = new FormData();
-    formData.append('plate', currentResult.plate);
-    if (currentResult.vehicle?.id) {
-      formData.append('vehicleId', currentResult.vehicle.id);
-    }
-    formData.append('eventType', 'EXIT');
-    formData.append('authorized', String(authorized));
-    uniqueStudents.forEach(s => {
-      formData.append('studentIds', s.id);
-    });
-    await logService.create(formData);
-    toast.success(
-      authorized
-        ? `Salida registrada: ${currentResult.plate}`
-        : `Acceso denegado: ${currentResult.plate}`
-    );
-    setResult(EMPTY_RESULT);
-    setManualPlate('');
+
+  const toggleCamera = () => {
+    generation.current += 1;
+    previousReading.current = null;
+    setOcrMessage('');
     setOcrConfidence(null);
-  } catch (err) {
-    console.error('Error al registrar el evento:', err);
-    toast.error('Error al registrar el evento');
-  } finally {
-    setConfirming(false);
-  }
-};
+    setResult(EMPTY_RESULT);
+    setCameraActive(active => !active);
+  };
+
+  const confirmExit = async (authorized, currentResult = result) => {
+    if (!currentResult.plate) return;
+    setConfirming(true);
+    try {
+      const allStudents = [
+        ...(currentResult.vehicle?.students?.map(vs => vs.student) || []),
+        ...(currentResult.tempPermits?.map(p => p.student) || []),
+      ];
+      const uniqueStudents = [
+        ...new Map(allStudents.map(s => [s.id, s])).values()
+      ];
+      const formData = new FormData();
+      formData.append('plate', currentResult.plate);
+      if (currentResult.vehicle?.id) {
+        formData.append('vehicleId', currentResult.vehicle.id);
+      }
+      formData.append('eventType', 'EXIT');
+      formData.append('authorized', String(authorized));
+      uniqueStudents.forEach(s => {
+        formData.append('studentIds', s.id);
+      });
+      await logService.create(formData);
+      toast.success(
+        authorized
+          ? `Salida registrada: ${currentResult.plate}`
+          : `Acceso denegado: ${currentResult.plate}`
+      );
+      setResult(EMPTY_RESULT);
+      setManualPlate('');
+      setOcrConfidence(null);
+      setOcrMessage('');
+    } catch (err) {
+      console.error('Error al registrar el evento:', err);
+      toast.error('Error al registrar el evento');
+    } finally {
+      setConfirming(false);
+    }
+  };
   const allStudents = [
     ...(result.vehicle?.students?.map(vs => ({ ...vs.student, isTemp: false })) || []),
     ...(result.tempPermits?.map(p => ({ ...p.student, isTemp: true, reason: p.reason })) || []),
@@ -166,34 +185,48 @@ const confirmExit = async (authorized, currentResult = result) => {
           <h3 style={{ marginBottom: 16 }}>Capturar placa</h3>
 
           <div style={{ marginBottom: 16 }}>
-            <button className={`btn ${cameraActive ? 'btn-ghost' : 'btn-primary'}`} onClick={() => setCameraActive(!cameraActive)}>
+            <button className={`btn ${cameraActive ? 'btn-ghost' : 'btn-primary'}`} onClick={toggleCamera} disabled={confirming}>
               {cameraActive ? 'Apagar cámara' : 'Activar cámara'}
             </button>
           </div>
 
           {cameraActive && (
             <div style={{ marginBottom: 16 }}>
-              <Webcam
-                ref={webcamRef}
-                screenshotFormat="image/jpeg"
-                style={{ width: '100%', borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)' }}
-              />
+              <label style={{ display: 'block', marginBottom: 8 }}>
+                <input type="checkbox" checked={cropCenter} disabled={searching} onChange={e => {
+                  generation.current += 1;
+                  previousReading.current = null;
+                  setCropCenter(e.target.checked);
+                }} /> Leer solo la zona central
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Webcam
+                  ref={webcamRef}
+                  audio={false}
+                  screenshotFormat="image/jpeg"
+                  screenshotQuality={0.95}
+                  forceScreenshotSourceSize
+                  videoConstraints={{ width: { ideal: 1280 }, height: { ideal: 720 } }}
+                  style={{ display: 'block', width: '100%', borderRadius: 'var(--radius)', border: '1px solid var(--gray-200)' }}
+                />
+                {cropCenter && <div style={{ position: 'absolute', left: '10%', top: '30%', width: '80%', height: '40%', border: '2px dashed #22c55e', pointerEvents: 'none' }} />}
+              </div>
               <button
                 className="btn btn-primary"
                 style={{ marginTop: 10, width: '100%', justifyContent: 'center' }}
-                onClick={captureAndRecognize}
+                onClick={() => captureAndRecognize(false)}
                 disabled={searching}
               >
                 {searching ? <><span className="spinner" style={{ borderTopColor: '#fff' }} /> Procesando...</> : 'Capturar y leer placa'}
               </button>
-              {ocrConfidence && (
-                <p style={{ fontSize: 12, color: 'var(--gray-500)', marginTop: 6 }}>
-                  Confianza OCR: {ocrConfidence.value}% — {ocrConfidence.text === 'high' ? 'Alta' : ocrConfidence.text === 'medium' ? 'Media' : 'Baja'}
-                </p>
-              )}
+
             </div>
           )}
 
+          {ocrMessage && <p role="status" style={{ fontSize: 13, marginBottom: 12 }}>{ocrMessage}</p>}
+          {ocrConfidence && <p style={{ fontSize: 12, color: 'var(--gray-500)', marginBottom: 12 }}>
+            Puntuación del lector: {ocrConfidence.value}/100 — {ocrConfidence.text === 'high' ? 'Alta' : ocrConfidence.text === 'medium' ? 'Media' : 'Baja'}
+          </p>}
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <div className="form-group" style={{ flex: 1 }}>
               <label className="form-label">Ingresar placa manualmente</label>
@@ -201,8 +234,13 @@ const confirmExit = async (authorized, currentResult = result) => {
                 className="form-input"
                 placeholder="ABC123"
                 value={manualPlate}
-                onChange={(e) => setManualPlate(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === 'Enter' && searchPlate(manualPlate)}
+                onChange={(e) => {
+                  generation.current += 1;
+                  previousReading.current = null;
+                  setCameraActive(false);
+                  setManualPlate(e.target.value.toUpperCase());
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && !searching && !confirming && searchPlate(manualPlate)}
                 maxLength={7}
                 style={{ fontFamily: 'monospace', fontSize: 18, letterSpacing: 3, fontWeight: 700 }}
               />
@@ -210,7 +248,7 @@ const confirmExit = async (authorized, currentResult = result) => {
             <button
               className="btn btn-primary"
               onClick={() => searchPlate(manualPlate)}
-              disabled={searching || !manualPlate}
+              disabled={searching || confirming || !manualPlate}
               style={{ marginBottom: 1 }}
             >
               {searching ? <span className="spinner" style={{ borderTopColor: '#fff' }} /> : 'Buscar'}

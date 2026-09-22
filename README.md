@@ -5,6 +5,7 @@
 ```
 school-gate/
 ├── backend/               # Node.js + Express + Prisma + PostgreSQL
+├── ocr-service/           # PaddleOCR (RapidOCR + ONNX Runtime), local y CPU
 ├── frontend-web/          # React Web App
 └── mobile-app/            # React Native (Expo)
 ```
@@ -14,6 +15,7 @@ school-gate/
 ## Requisitos previos
 
 - Node.js 18+
+- Python 3.11 de 64 bits para el lector local (Mac o Windows)
 - PostgreSQL 14+
 - Expo CLI (`npm install -g expo-cli`)
 - Un dispositivo Android o iOS (o emulador)
@@ -52,6 +54,11 @@ npm run dev
 ```
 
 El servidor corre en `http://localhost:4000`
+
+Antes de leer placas, instala y arranca el [servicio OCR local](ocr-service/README.md).
+Incluye instrucciones para Mac y Windows y para instalaciones sin internet.
+Los modelos vienen incluidos en el paquete; no hay pagos ni conexión durante las
+lecturas. El backend espera el lector en `http://127.0.0.1:8001`.
 
 ### Usuarios creados por el seed:
 | Rol | Email | Contraseña |
@@ -138,12 +145,15 @@ npx expo start
 
 1. El portero abre la app (web o móvil)
 2. Activa la cámara o sube una foto
-3. El backend procesa la imagen con **Tesseract.js** (OCR)
-4. Se extrae la placa (formato colombiano: ABC123 o ABC12D)
+3. El backend envía la imagen al servicio local de **PaddleOCR vía RapidOCR/ONNX**
+4. Se valida la placa (ABC123 o ABC12D); las lecturas dudosas requieren revisión
 5. El sistema consulta la base de datos
 6. Si está registrado → muestra vehículo + estudiantes autorizados
 7. El portero confirma la salida o deniega el paso
 8. El evento queda registrado en el historial en tiempo real (Socket.io)
+
+La web exige dos lecturas coincidentes para la consulta automática. El botón de
+captura permite una lectura individual; los eventos los confirma el portero.
 
 ---
 
@@ -155,13 +165,17 @@ JWT_SECRET="secreto_muy_seguro"
 JWT_EXPIRES_IN="8h"
 PORT=4000
 FRONTEND_URL="http://localhost:3000"
+OCR_SERVICE_URL="http://127.0.0.1:8001"
+OCR_TIMEOUT_MS="20000"
 ```
 
 ---
 
 ## Tecnologías utilizadas
 
-**Backend:** Node.js · Express · Prisma ORM · PostgreSQL · Tesseract.js (OCR) · Socket.io · JWT · Multer
+**Backend:** Node.js · Express · Prisma ORM · PostgreSQL · Socket.io · JWT · Multer
+
+**OCR local:** Python · FastAPI · PaddleOCR (PP-OCRv4 vía RapidOCR) · ONNX Runtime CPU · OpenCV
 
 **Frontend Web:** React · React Router · Axios · Socket.io-client · react-webcam · date-fns
 

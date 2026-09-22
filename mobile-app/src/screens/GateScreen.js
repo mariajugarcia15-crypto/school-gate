@@ -48,11 +48,12 @@ export default function GateScreen() {
   };
 
   const takePhoto = async () => {
-    if (!cameraRef.current) return;
+    if (!cameraRef.current || searching) return;
     setSearching(true);
-    setCameraOpen(false);
+    setResult(null);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.8 });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+      setCameraOpen(false);
       const formData = new FormData();
       formData.append('image', {
         uri: photo.uri,
@@ -60,13 +61,11 @@ export default function GateScreen() {
         name: 'plate.jpg',
       });
       const ocrRes = await ocrService.recognize(formData);
-      const { plate } = ocrRes.data;
-      Alert.alert('Placa detectada', `Se detectó: ${plate}\n¿Es correcto?`, [
-        { text: 'No, corregir', style: 'cancel', onPress: () => { setManualPlate(plate); setSearching(false); } },
-        { text: 'Sí, buscar', onPress: () => searchPlate(plate) },
-      ]);
-    } catch {
-      Alert.alert('Error', 'No se pudo procesar la imagen');
+      reviewReading(ocrRes.data);
+    } catch (err) {
+      Alert.alert('Error', err.response?.data?.error || 'No se pudo procesar la imagen');
+    } finally {
+      setCameraOpen(false);
       setSearching(false);
     }
   };
@@ -77,15 +76,31 @@ export default function GateScreen() {
     const img = await ImagePicker.launchImageLibraryAsync({ base64: false, quality: 0.8 });
     if (img.canceled) return;
     setSearching(true);
+    setResult(null);
     try {
       const formData = new FormData();
       formData.append('image', { uri: img.assets[0].uri, type: 'image/jpeg', name: 'plate.jpg' });
       const ocrRes = await ocrService.recognize(formData);
-      Alert.alert('Placa detectada', `${ocrRes.data.plate}`, [
-        { text: 'Buscar', onPress: () => searchPlate(ocrRes.data.plate) },
-      ]);
-    } catch { Alert.alert('Error', 'No se pudo leer la imagen'); }
+      reviewReading(ocrRes.data);
+    } catch (err) { Alert.alert('Error', err.response?.data?.error || 'No se pudo leer la imagen'); }
     finally { setSearching(false); }
+  };
+
+  const reviewReading = (data) => {
+    setResult(null);
+    if (!data.plate || data.status !== 'recognized') {
+      const candidate = data.candidates?.length === 1 ? data.candidates[0].plate : '';
+      setManualPlate(candidate);
+      Alert.alert('Revisar placa', candidate
+        ? `Lectura dudosa: ${candidate}. Revisa y corrige el campo antes de buscar.`
+        : 'No se pudo identificar una sola placa. Acerca la cámara o ingrésala manualmente.');
+      return;
+    }
+    setManualPlate(data.plate);
+    Alert.alert('Placa detectada', `Se detectó: ${data.plate}\n¿Es correcto?`, [
+      { text: 'Corregir', style: 'cancel' },
+      { text: 'Sí, buscar', onPress: () => searchPlate(data.plate) },
+    ]);
   };
 
   const confirmExit = async (authorized) => {
@@ -127,10 +142,10 @@ export default function GateScreen() {
             <View style={styles.plateGuide} />
             <Text style={styles.cameraHint}>Apunta al frente del vehículo</Text>
             <View style={styles.cameraButtons}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => { setCameraOpen(false); setSearching(false); }}>
+              <TouchableOpacity style={styles.cancelBtn} disabled={searching} onPress={() => { setCameraOpen(false); setSearching(false); }}>
                 <Text style={styles.cancelBtnText}>Cancelar</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.captureBtn} onPress={takePhoto}>
+              <TouchableOpacity style={styles.captureBtn} onPress={takePhoto} disabled={searching}>
                 <View style={styles.captureInner} />
               </TouchableOpacity>
               <View style={{ width: 80 }} />

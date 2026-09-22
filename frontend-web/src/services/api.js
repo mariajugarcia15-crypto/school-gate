@@ -69,5 +69,5 @@ export const logService = {
 
 // --- OCR ---
 export const ocrService = {
-  recognize: (formData) => api.post('/ocr/recognize', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  recognize: (formData) => api.post('/ocr/recognize', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 30000 }),
 };
