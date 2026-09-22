@@ -64,6 +64,7 @@ export const logService = {
   getAll: (params) => api.get('/logs', { params }),
   getToday: () => api.get('/logs/today'),
   getStats: () => api.get('/logs/stats'),
+  getRecentByPlate: (plate, minutes = 5) => api.get('/logs/recent', { params: { plate, minutes } }),
   create: (formData) => api.post('/logs', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
 };
 

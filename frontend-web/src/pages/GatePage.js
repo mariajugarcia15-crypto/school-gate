@@ -14,7 +14,7 @@ export default function GatePage() {
   const inFlight = useRef(false);
   const generation = useRef(0);
   const previousReading = useRef(null);
-  const lastLoggedPlate = useRef({ plate: '', time: 0 });
+  const lastLoggedPlate = useRef({});
   const [cropCenter, setCropCenter] = useState(false);
   const [ocrMessage, setOcrMessage] = useState('');
   const [searching, setSearching] = useState(false);
@@ -29,6 +29,29 @@ export default function GatePage() {
 
   const registerAccessEvent = useCallback(async (authorized, currentResult = result) => {
     if (!currentResult.plate) return;
+
+    const normalized = currentResult.plate.trim().toUpperCase();
+    const now = Date.now();
+    const previous = lastLoggedPlate.current[normalized] || 0;
+    if (previous && now - previous < 5 * 60 * 1000) {
+      setOcrConfidence(null);
+      setOcrMessage('');
+      return;
+    }
+
+    try {
+      const recentRes = await logService.getRecentByPlate(normalized, 5);
+      if (recentRes?.data?.exists) {
+        lastLoggedPlate.current[normalized] = now;
+        setOcrConfidence(null);
+        setOcrMessage('');
+        return;
+      }
+    } catch (err) {
+      console.warn('No se pudo verificar el historial reciente de la placa', err);
+    }
+
+    lastLoggedPlate.current[normalized] = now;
     setConfirming(true);
     try {
       const allStudents = [
@@ -39,7 +62,7 @@ export default function GatePage() {
         ...new Map(allStudents.map(s => [s.id, s])).values()
       ];
       const formData = new FormData();
-      formData.append('plate', currentResult.plate);
+      formData.append('plate', normalized);
       if (currentResult.vehicle?.id) {
         formData.append('vehicleId', currentResult.vehicle.id);
       }
@@ -51,8 +74,8 @@ export default function GatePage() {
       await logService.create(formData);
       toast.success(
         authorized
-          ? `Salida registrada: ${currentResult.plate}`
-          : `Acceso denegado: ${currentResult.plate}`
+          ? `Salida registrada: ${normalized}`
+          : `Acceso denegado: ${normalized}`
       );
       setOcrConfidence(null);
       setOcrMessage('');
@@ -68,7 +91,8 @@ export default function GatePage() {
     const normalized = plate.trim().toUpperCase().replace(/\s/g, '');
     if (!normalized) return null;
     const now = Date.now();
-    if (lastLoggedPlate.current.plate === normalized && now - lastLoggedPlate.current.time < 8000) {
+    const previous = lastLoggedPlate.current[normalized] || 0;
+    if (previous && now - previous < 5 * 60 * 1000) {
       return null;
     }
     generation.current += 1;
@@ -78,13 +102,11 @@ export default function GatePage() {
       const res = await vehicleService.getByPlate(normalized);
       const newResult = { ...res.data, plate: normalized };
       setResult(newResult);
-      lastLoggedPlate.current = { plate: normalized, time: now };
       await registerAccessEvent(Boolean(newResult.found), newResult);
       return newResult;
     } catch (err) {
       const fallbackResult = { ...EMPTY_RESULT, plate: normalized, found: false };
       setResult(fallbackResult);
-      lastLoggedPlate.current = { plate: normalized, time: now };
       await registerAccessEvent(false, fallbackResult);
       if (err.response?.status !== 404 && err.response?.status !== 400) {
         toast.error('Error consultando la placa');
@@ -208,9 +230,6 @@ export default function GatePage() {
                 />
                 {cropCenter && <div style={{ position: 'absolute', left: '10%', top: '30%', width: '80%', height: '40%', border: '2px dashed #22c55e', pointerEvents: 'none' }} />}
               </div>
-              <p style={{ fontSize: 13, marginTop: 10 }}>
-                {searching ? 'Leyendo placa…' : result.plate ? 'Vehículo identificado. Confirma la acción para continuar.' : 'Lectura automática activa. Coloca la placa frente a la cámara.'}
-              </p>
 
             </div>
           )}

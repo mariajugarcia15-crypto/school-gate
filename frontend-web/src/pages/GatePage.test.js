@@ -6,7 +6,10 @@ import { ocrService, vehicleService, logService } from '../services/api';
 jest.mock('../services/api', () => ({
   ocrService: { recognize: jest.fn() },
   vehicleService: { getByPlate: jest.fn() },
-  logService: { create: jest.fn() },
+  logService: {
+    create: jest.fn(),
+    getRecentByPlate: jest.fn(() => Promise.resolve({ data: { exists: false } })),
+  },
 }));
 jest.mock('react-hot-toast', () => ({ success: jest.fn(), error: jest.fn() }));
 jest.mock('react-webcam', () => {
@@ -30,6 +33,7 @@ beforeEach(async () => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   jest.useFakeTimers();
   jest.clearAllMocks();
+  logService.getRecentByPlate.mockResolvedValue({ data: { exists: false } });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -80,6 +84,24 @@ test('unregistered plates are recorded as denied access without stopping OCR', a
   expect(logService.create).toHaveBeenCalledTimes(1);
   expect(logService.create).toHaveBeenCalledWith(expect.any(FormData));
   expect(container.textContent).toContain('Vehículo NO registrado');
+});
+
+test('same plate is not logged twice within 5 minutes', async () => {
+  const reading = plate => ({ data: { plate, status: 'recognized', confidence: 'high', ocrConfidence: 98, candidates: [] } });
+  ocrService.recognize.mockResolvedValueOnce(reading('ABC123'));
+  vehicleService.getByPlate.mockResolvedValue({ data: { found: true, vehicle: { id: 'v1', plate: 'ABC123', students: [] }, tempPermits: [] } });
+  logService.create.mockResolvedValue({});
+
+  await frame();
+  expect(logService.getRecentByPlate).toHaveBeenCalledWith('ABC123', 5);
+  expect(logService.create).toHaveBeenCalledTimes(1);
+
+  logService.getRecentByPlate.mockResolvedValueOnce({ data: { exists: true } });
+  jest.setSystemTime(new Date(Date.now() + 4 * 60 * 1000));
+  ocrService.recognize.mockResolvedValueOnce(reading('ABC123'));
+  await frame();
+
+  expect(logService.create).toHaveBeenCalledTimes(1);
 });
 
 test('reader errors retry automatically while the camera remains active', async () => {

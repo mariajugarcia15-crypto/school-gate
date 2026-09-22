@@ -39,14 +39,55 @@ const getToday = async (_req, res) => {
   res.json(logs);
 };
 
+const getRecentByPlate = async (req, res) => {
+  const { plate, minutes = 5 } = req.query;
+  const normalized = (plate || '').toUpperCase().replace(/\s/g, '');
+
+  if (!normalized) {
+    return res.status(400).json({ error: 'Se requiere una placa.' });
+  }
+
+  const from = new Date(Date.now() - Number(minutes || 5) * 60 * 1000);
+  const recent = await prisma.accessLog.findFirst({
+    where: {
+      plate: { equals: normalized, mode: 'insensitive' },
+      createdAt: { gte: from },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return res.json({ exists: !!recent, recent: recent ? { id: recent.id, plate: recent.plate, createdAt: recent.createdAt } : null });
+};
+
 const create = async (req, res) => {
   const { vehicleId, plate, eventType, studentIds, notes, ocrRaw, confidence, authorized } = req.body;
+  const normalizedPlate = (plate || '').toUpperCase().replace(/\s/g, '');
   const photoUrl = req.file ? `/uploads/logs/${req.file.filename}` : null;
+
+  if (!normalizedPlate) {
+    return res.status(400).json({ error: 'La placa es obligatoria.' });
+  }
+
+  const recent = await prisma.accessLog.findFirst({
+    where: {
+      plate: { equals: normalizedPlate, mode: 'insensitive' },
+      createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (recent) {
+    return res.status(409).json({
+      error: `La placa ${normalizedPlate} ya fue registrada en los últimos 5 minutos.`,
+      duplicate: true,
+      recent,
+    });
+  }
 
   const log = await prisma.accessLog.create({
     data: {
       vehicleId: vehicleId || null,
-      plate: plate.toUpperCase().replace(/\s/g, ''),
+      plate: normalizedPlate,
       eventType: eventType || 'EXIT',
       photoUrl,
       ocrRaw,
@@ -102,4 +143,4 @@ const getStats = async (_req, res) => {
   res.json({ todayTotal, todayAuthorized, todayDenied, totalVehicles, totalStudents });
 };
 
-module.exports = { getAll, getToday, create, getStats };
+module.exports = { getAll, getToday, getRecentByPlate, create, getStats };
