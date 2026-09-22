@@ -272,7 +272,7 @@ export default function GatePage() {
               </div>
 
               {/* Students */}
-              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: 'var(--gray-700)' }}>
+              {/* <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: 'var(--gray-700)' }}>
                 Estudiantes autorizados ({uniqueStudents.length})
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
@@ -291,10 +291,10 @@ export default function GatePage() {
                     </span>
                   </div>
                 ))}
-              </div>
+              </div> */}
 
               {/* Action buttons */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {/* <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <button
                   className="btn btn-success"
                   style={{ justifyContent: 'center', padding: '12px' }}
@@ -311,7 +311,7 @@ export default function GatePage() {
                 >
                   Denegar paso
                 </button>
-              </div>
+              </div> */}
             </div>
           )}
         </div>
