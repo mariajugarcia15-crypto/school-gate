@@ -1,5 +1,5 @@
 // src/pages/GatePage.js
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import toast from 'react-hot-toast';
 import { ocrService, vehicleService, logService } from '../services/api';
@@ -10,78 +10,143 @@ const EMPTY_RESULT = { found: false, vehicle: null, tempPermits: [], plate: '' }
 export default function GatePage() {
   const webcamRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
+
+const lastDetectedPlates = useRef(new Map());
+const DUPLICATE_TIME = 5 * 60 * 1000; // 5 minutos
+
   const [manualPlate, setManualPlate] = useState('');
   const [searching, setSearching] = useState(false);
   const [result, setResult] = useState(EMPTY_RESULT);
   const [confirming, setConfirming] = useState(false);
   const [ocrConfidence, setOcrConfidence] = useState(null);
 
-  const searchPlate = async (plate) => {
-    if (!plate.trim()) return;
-    setSearching(true);
+const searchPlate = async (plate) => {
+  if (!plate.trim()) return null;
+  setSearching(true);
+  setResult(EMPTY_RESULT);
+  try {
+    const res = await vehicleService.getByPlate(
+      plate.trim().toUpperCase()
+    );
+    const newResult = {
+      ...res.data,
+      plate: plate.toUpperCase(),
+    };
+    setResult(newResult);
+    return newResult;
+  } catch (err) {
+    if (err.response?.status === 404) {
+      const newResult = {
+        found: false,
+        plate: plate.toUpperCase(),
+        vehicle: null,
+        tempPermits: [],
+      };
+      setResult(newResult);
+      return newResult;
+    } else {
+      toast.error('Error consultando la placa');
+      return null;
+    }
+  } finally {
+    setSearching(false);
+  }
+};
+
+const captureAndRecognize = useCallback(async () => {
+  if (searching || confirming) return;
+  const imageSrc = webcamRef.current?.getScreenshot();
+  if (!imageSrc) return;
+  setSearching(true);
+  try {
+    const formData = new FormData();
+    formData.append('imageBase64', imageSrc);
+    const ocrRes = await ocrService.recognize(formData);
+    const {
+      plate,
+      confidence,
+      ocrConfidence: conf
+    } = ocrRes.data;
+    if (!plate) {
+      return;
+    }
+    const normalizedPlate = plate
+      .trim()
+      .toUpperCase()
+      .replace(/\s/g, '');
+    setOcrConfidence({
+      text: confidence,
+      value: conf
+    });
+    console.log('Placa detectada:', normalizedPlate);
+    // Buscar automáticamente el vehículo
+    const foundResult = await searchPlate(normalizedPlate);
+    if (!foundResult) {
+      return;
+    }
+    // Si el vehículo está registrado/autorizado
+    if (foundResult.found) {
+      console.log(
+        `Vehículo autorizado: ${normalizedPlate}`
+      );
+      await confirmExit(true, foundResult);
+    } else {
+      console.log(
+        `Vehículo no autorizado: ${normalizedPlate}`
+      );
+      await confirmExit(false, foundResult);
+    }
+  } catch (err) {
+    console.error('Error en reconocimiento automático:', err);
+  } finally {
+    setSearching(false);
+  }
+}, [searching, confirming, searchPlate]);
+
+    useEffect(() => {
+    if (!cameraActive) return;
+    const interval = setInterval(() => {
+      captureAndRecognize();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [cameraActive, captureAndRecognize]);
+const confirmExit = async (authorized, currentResult = result) => {
+  if (!currentResult.plate) return;
+  setConfirming(true);
+  try {
+    const allStudents = [
+      ...(currentResult.vehicle?.students?.map(vs => vs.student) || []),
+      ...(currentResult.tempPermits?.map(p => p.student) || []),
+    ];
+    const uniqueStudents = [
+      ...new Map(allStudents.map(s => [s.id, s])).values()
+    ];
+    const formData = new FormData();
+    formData.append('plate', currentResult.plate);
+    if (currentResult.vehicle?.id) {
+      formData.append('vehicleId', currentResult.vehicle.id);
+    }
+    formData.append('eventType', 'EXIT');
+    formData.append('authorized', String(authorized));
+    uniqueStudents.forEach(s => {
+      formData.append('studentIds', s.id);
+    });
+    await logService.create(formData);
+    toast.success(
+      authorized
+        ? `Salida registrada: ${currentResult.plate}`
+        : `Acceso denegado: ${currentResult.plate}`
+    );
     setResult(EMPTY_RESULT);
-    try {
-      const res = await vehicleService.getByPlate(plate.trim().toUpperCase());
-      setResult({ ...res.data, plate: plate.toUpperCase() });
-    } catch (err) {
-      if (err.response?.status === 404) {
-        setResult({ found: false, plate: plate.toUpperCase(), vehicle: null, tempPermits: [] });
-        toast.error('Vehículo no registrado en el sistema');
-      } else {
-        toast.error('Error consultando la placa');
-      }
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const captureAndRecognize = useCallback(async () => {
-    const imageSrc = webcamRef.current?.getScreenshot();
-    if (!imageSrc) return toast.error('No se pudo capturar imagen');
-    setSearching(true);
-    try {
-      const formData = new FormData();
-      formData.append('imageBase64', imageSrc);
-      const ocrRes = await ocrService.recognize(formData);
-      const { plate, confidence, ocrConfidence: conf } = ocrRes.data;
-      setOcrConfidence({ text: confidence, value: conf });
-      toast.success(`Placa detectada: ${plate} (${conf}% confianza)`);
-      await searchPlate(plate);
-    } catch {
-      toast.error('Error al procesar la imagen');
-      setSearching(false);
-    }
-  }, []);
-
-  const confirmExit = async (authorized) => {
-    if (!result.plate) return;
-    setConfirming(true);
-    try {
-      const allStudents = [
-        ...(result.vehicle?.students?.map(vs => vs.student) || []),
-        ...(result.tempPermits?.map(p => p.student) || []),
-      ];
-      const uniqueStudents = [...new Map(allStudents.map(s => [s.id, s])).values()];
-
-      const formData = new FormData();
-      formData.append('plate', result.plate);
-      if (result.vehicle?.id) formData.append('vehicleId', result.vehicle.id);
-      formData.append('eventType', 'EXIT');
-      formData.append('authorized', String(authorized));
-      uniqueStudents.forEach(s => formData.append('studentIds', s.id));
-
-      await logService.create(formData);
-      toast.success(authorized ? 'Salida registrada exitosamente' : 'Acceso denegado registrado');
-      setResult(EMPTY_RESULT);
-      setManualPlate('');
-      setOcrConfidence(null);
-    } catch {
-      toast.error('Error al registrar el evento');
-    } finally {
-      setConfirming(false);
-    }
-  };
-
+    setManualPlate('');
+    setOcrConfidence(null);
+  } catch (err) {
+    console.error('Error al registrar el evento:', err);
+    toast.error('Error al registrar el evento');
+  } finally {
+    setConfirming(false);
+  }
+};
   const allStudents = [
     ...(result.vehicle?.students?.map(vs => ({ ...vs.student, isTemp: false })) || []),
     ...(result.tempPermits?.map(p => ({ ...p.student, isTemp: true, reason: p.reason })) || []),
