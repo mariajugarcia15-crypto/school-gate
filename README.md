@@ -144,16 +144,17 @@ npx expo start
 ## Flujo de lectura de placa
 
 1. El portero abre la app (web o móvil)
-2. Activa la cámara o sube una foto
+2. Activa la cámara en la web o toma/selecciona una foto en el móvil
 3. El backend envía la imagen al servicio local de **PaddleOCR vía RapidOCR/ONNX**
-4. Se valida la placa (ABC123 o ABC12D); las lecturas dudosas requieren revisión
+4. Se valida la placa (ABC123 o ABC12D); las lecturas dudosas requieren otra captura
 5. El sistema consulta la base de datos
 6. Si está registrado → muestra vehículo + estudiantes autorizados
 7. El portero confirma la salida o deniega el paso
 8. El evento queda registrado en el historial en tiempo real (Socket.io)
 
-La web exige dos lecturas coincidentes para la consulta automática. El botón de
-captura permite una lectura individual; los eventos los confirma el portero.
+La web lee continuamente y exige dos lecturas coincidentes para consultar el vehículo.
+No hay ingreso manual de placas. En el móvil, la consulta se realiza automáticamente
+al reconocer la foto. Los eventos los confirma el portero.
 
 ---
 

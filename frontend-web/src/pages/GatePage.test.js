@@ -41,54 +41,52 @@ afterEach(async () => {
   jest.useRealTimers();
 });
 
-test('empty and uncertain readings never query a vehicle or record an event', async () => {
+test('camera is active by default and keeps scanning even without a valid plate', async () => {
   ocrService.recognize.mockResolvedValueOnce({ data: { plate: null, status: 'no_plate', confidence: 'low', ocrConfidence: 0, candidates: [] } });
-  await click('Activar cámara');
   await frame();
-  expect(container.textContent).toContain('No se pudo leer');
-  ocrService.recognize.mockResolvedValueOnce({ data: { plate: null, status: 'review_required', confidence: 'medium', ocrConfidence: 80, candidates: [{ plate: 'ABC123' }] } });
-  await frame();
-  expect(container.textContent).toContain('Lectura dudosa');
-  expect(container.querySelector('input.form-input').value).toBe('ABC123');
+  expect(container.textContent).toContain('Cámara activa');
+  expect(container.textContent).toContain('No se pudo leer la placa');
   expect(vehicleService.getByPlate).not.toHaveBeenCalled();
   expect(logService.create).not.toHaveBeenCalled();
+
+  ocrService.recognize.mockResolvedValueOnce({ data: { plate: null, status: 'review_required', confidence: 'medium', ocrConfidence: 80, candidates: [{ plate: 'ABC123' }] } });
+  await frame();
+  expect(vehicleService.getByPlate).toHaveBeenCalledWith('ABC123');
+  expect(container.textContent).toContain('ABC123');
 });
 
-test('automatic lookup requires matching readings and exit stays manual', async () => {
+test('recognized plates are looked up and registered automatically', async () => {
   const reading = plate => ({ data: { plate, status: 'recognized', confidence: 'high', ocrConfidence: 98, candidates: [] } });
-  ocrService.recognize.mockResolvedValueOnce(reading('ABC123'))
-    .mockResolvedValueOnce(reading('XYZ789')).mockResolvedValueOnce(reading('XYZ789'));
+  ocrService.recognize.mockResolvedValueOnce(reading('XYZ789'));
   vehicleService.getByPlate.mockResolvedValue({ data: { found: true, vehicle: { id: 'v1', plate: 'XYZ789', students: [] }, tempPermits: [] } });
   logService.create.mockResolvedValue({});
-  await click('Activar cámara');
-  await frame();
-  await frame();
-  expect(vehicleService.getByPlate).not.toHaveBeenCalled();
+
   await frame();
   expect(vehicleService.getByPlate).toHaveBeenCalledTimes(1);
   expect(vehicleService.getByPlate).toHaveBeenCalledWith('XYZ789');
-  expect(logService.create).not.toHaveBeenCalled();
-  await click('Confirmar salida');
   expect(logService.create).toHaveBeenCalledTimes(1);
+  expect(container.textContent).toContain('XYZ789');
 });
 
-test('a result arriving after stopping the camera is ignored', async () => {
-  let resolve;
-  ocrService.recognize.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-  await click('Activar cámara');
+test('unregistered plates are recorded as denied access without stopping OCR', async () => {
+  const reading = plate => ({ data: { plate, status: 'recognized', confidence: 'high', ocrConfidence: 98, candidates: [] } });
+  ocrService.recognize.mockResolvedValueOnce(reading('ABC123'));
+  vehicleService.getByPlate.mockResolvedValue({ data: { found: false, vehicle: null, tempPermits: [], plate: 'ABC123' } });
+  logService.create.mockResolvedValue({});
+
   await frame();
-  await click('Apagar cámara');
-  await act(async () => resolve({ data: { plate: 'ABC123', status: 'recognized', confidence: 'high', ocrConfidence: 99 } }));
-  expect(vehicleService.getByPlate).not.toHaveBeenCalled();
-  expect(container.querySelector('input.form-input').value).toBe('');
+  expect(vehicleService.getByPlate).toHaveBeenCalledTimes(1);
+  expect(vehicleService.getByPlate).toHaveBeenCalledWith('ABC123');
+  expect(logService.create).toHaveBeenCalledTimes(1);
+  expect(logService.create).toHaveBeenCalledWith(expect.any(FormData));
+  expect(container.textContent).toContain('Vehículo NO registrado');
 });
 
-test('an unavailable reader stops retries and shows the error', async () => {
-  ocrService.recognize.mockRejectedValueOnce({ response: { status: 503, data: { error: 'Inicia el servicio OCR' } } });
-  await click('Activar cámara');
+test('reader errors retry automatically while the camera remains active', async () => {
+  ocrService.recognize.mockRejectedValue({ response: { status: 503, data: { error: 'Inicia el servicio OCR' } } });
   await frame();
   expect(container.textContent).toContain('Inicia el servicio OCR');
   await frame();
-  expect(ocrService.recognize).toHaveBeenCalledTimes(1);
+  expect(ocrService.recognize).toHaveBeenCalledTimes(2);
   expect(vehicleService.getByPlate).not.toHaveBeenCalled();
 });

@@ -9,126 +9,25 @@ const EMPTY_RESULT = { found: false, vehicle: null, tempPermits: [], plate: '' }
 
 export default function GatePage() {
   const webcamRef = useRef(null);
-  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraActive, setCameraActive] = useState(true);
 
   const inFlight = useRef(false);
   const generation = useRef(0);
   const previousReading = useRef(null);
+  const lastLoggedPlate = useRef({ plate: '', time: 0 });
   const [cropCenter, setCropCenter] = useState(false);
   const [ocrMessage, setOcrMessage] = useState('');
-  const [manualPlate, setManualPlate] = useState('');
   const [searching, setSearching] = useState(false);
   const [result, setResult] = useState(EMPTY_RESULT);
   const [confirming, setConfirming] = useState(false);
   const [ocrConfidence, setOcrConfidence] = useState(null);
 
-  useEffect(() => () => { generation.current += 1; }, []);
-
-  const searchPlate = useCallback(async (plate) => {
-    const normalized = plate.trim().toUpperCase().replace(/\s/g, '');
-    if (!normalized) return null;
-    generation.current += 1;
-    previousReading.current = null;
-    setCameraActive(false);
-    setSearching(true);
-    setResult(EMPTY_RESULT);
-    try {
-      const res = await vehicleService.getByPlate(normalized);
-      const newResult = { ...res.data, plate: normalized };
-      setResult(newResult);
-      return newResult;
-    } catch (err) {
-      if (err.response?.status === 404) {
-        const newResult = { ...EMPTY_RESULT, plate: normalized };
-        setResult(newResult);
-        return newResult;
-      }
-      toast.error('Error consultando la placa');
-      return null;
-    } finally {
-      setSearching(false);
-    }
+  useEffect(() => {
+    setCameraActive(true);
+    return () => { generation.current += 1; };
   }, []);
 
-  const captureAndRecognize = useCallback(async (automatic = false) => {
-    if (inFlight.current || searching || confirming) return;
-    let imageSrc = webcamRef.current?.getScreenshot();
-    if (!imageSrc) return;
-    if (cropCenter) {
-      const video = webcamRef.current?.video;
-      if (!video?.videoWidth || !video?.videoHeight) return;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(video.videoWidth * 0.8);
-      canvas.height = Math.round(video.videoHeight * 0.4);
-      canvas.getContext('2d').drawImage(video,
-        video.videoWidth * 0.1, video.videoHeight * 0.3,
-        canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
-      imageSrc = canvas.toDataURL('image/jpeg', 0.95);
-    }
-    const currentGeneration = generation.current;
-    inFlight.current = true;
-    setSearching(true);
-    setResult(EMPTY_RESULT);
-    try {
-      const formData = new FormData();
-      formData.append('imageBase64', imageSrc);
-      const { data } = await ocrService.recognize(formData);
-      if (currentGeneration !== generation.current) return;
-      setOcrConfidence({ text: data.confidence, value: data.ocrConfidence });
-      if (data.status !== 'recognized' || !data.plate) {
-        previousReading.current = null;
-        if (data.status === 'ambiguous') {
-          setCameraActive(false);
-          setOcrMessage('Hay varias placas posibles. Enfoca un solo vehículo o escribe la placa.');
-          setManualPlate('');
-        } else if (data.candidates?.length === 1) {
-          setCameraActive(false);
-          setManualPlate(data.candidates[0].plate);
-          setOcrMessage('Lectura dudosa. Revisa y corrige la placa antes de pulsar Buscar.');
-        } else {
-          setManualPlate('');
-          setOcrMessage('No se pudo leer la placa. Acerca la cámara, mejora la luz o ingrésala manualmente.');
-        }
-        return;
-      }
-      // setManualPlate(data.plate);
-      // const previous = previousReading.current;
-      // previousReading.current = { plate: data.plate, time: Date.now() };
-      // if (automatic && (!previous || previous.plate !== data.plate || Date.now() - previous.time > 15000)) {
-      //   setOcrMessage(`Lectura: ${data.plate}. Esperando otra captura coincidente…`);
-      //   return;
-      // }
-      // setOcrMessage(`Placa leída: ${data.plate}. Verifica el vehículo y confirma la acción.`);
-      // // OCR identifies a candidate; the operator confirms or denies the exit.
-      // await searchPlate(data.plate);
-    } catch (err) {
-      if (currentGeneration !== generation.current) return;
-      previousReading.current = null;
-      setOcrConfidence(null);
-      setOcrMessage(err.response?.data?.error || 'No se pudo conectar con el lector local.');
-      if (err.response?.status !== 429) setCameraActive(false);
-    } finally {
-      inFlight.current = false;
-      setSearching(false);
-    }
-  }, [searching, confirming, cropCenter, searchPlate]);
-
-  useEffect(() => {
-    if (!cameraActive) return;
-    const interval = setInterval(() => captureAndRecognize(true), 2000);
-    return () => clearInterval(interval);
-  }, [cameraActive, captureAndRecognize]);
-
-  const toggleCamera = () => {
-    generation.current += 1;
-    previousReading.current = null;
-    setOcrMessage('');
-    setOcrConfidence(null);
-    setResult(EMPTY_RESULT);
-    setCameraActive(active => !active);
-  };
-
-  const confirmExit = async (authorized, currentResult = result) => {
+  const registerAccessEvent = useCallback(async (authorized, currentResult = result) => {
     if (!currentResult.plate) return;
     setConfirming(true);
     try {
@@ -155,8 +54,6 @@ export default function GatePage() {
           ? `Salida registrada: ${currentResult.plate}`
           : `Acceso denegado: ${currentResult.plate}`
       );
-      setResult(EMPTY_RESULT);
-      setManualPlate('');
       setOcrConfidence(null);
       setOcrMessage('');
     } catch (err) {
@@ -165,6 +62,106 @@ export default function GatePage() {
     } finally {
       setConfirming(false);
     }
+  }, [result]);
+
+  const searchPlate = useCallback(async (plate) => {
+    const normalized = plate.trim().toUpperCase().replace(/\s/g, '');
+    if (!normalized) return null;
+    const now = Date.now();
+    if (lastLoggedPlate.current.plate === normalized && now - lastLoggedPlate.current.time < 8000) {
+      return null;
+    }
+    generation.current += 1;
+    previousReading.current = null;
+    setSearching(true);
+    try {
+      const res = await vehicleService.getByPlate(normalized);
+      const newResult = { ...res.data, plate: normalized };
+      setResult(newResult);
+      lastLoggedPlate.current = { plate: normalized, time: now };
+      await registerAccessEvent(Boolean(newResult.found), newResult);
+      return newResult;
+    } catch (err) {
+      const fallbackResult = { ...EMPTY_RESULT, plate: normalized, found: false };
+      setResult(fallbackResult);
+      lastLoggedPlate.current = { plate: normalized, time: now };
+      await registerAccessEvent(false, fallbackResult);
+      if (err.response?.status !== 404 && err.response?.status !== 400) {
+        toast.error('Error consultando la placa');
+      }
+      return fallbackResult;
+    } finally {
+      setSearching(false);
+    }
+  }, [registerAccessEvent]);
+
+  const captureAndRecognize = useCallback(async () => {
+    if (inFlight.current || confirming) return;
+    let imageSrc = webcamRef.current?.getScreenshot();
+    if (!imageSrc) return;
+    if (cropCenter) {
+      const video = webcamRef.current?.video;
+      if (!video?.videoWidth || !video?.videoHeight) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(video.videoWidth * 0.8);
+      canvas.height = Math.round(video.videoHeight * 0.4);
+      canvas.getContext('2d').drawImage(video,
+        video.videoWidth * 0.1, video.videoHeight * 0.3,
+        canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+      imageSrc = canvas.toDataURL('image/jpeg', 0.95);
+    }
+    const currentGeneration = generation.current;
+    inFlight.current = true;
+    setSearching(true);
+    try {
+      const formData = new FormData();
+      formData.append('imageBase64', imageSrc);
+      const { data } = await ocrService.recognize(formData);
+      if (currentGeneration !== generation.current) return;
+      setOcrConfidence({ text: data.confidence, value: data.ocrConfidence });
+
+      const plateCandidate = ((data?.plate || data?.candidates?.[0]?.plate || '').trim().toUpperCase());
+      if (!plateCandidate) {
+        previousReading.current = null;
+        if (data.status === 'ambiguous') {
+          setOcrMessage('Hay varias placas posibles; el lector continuará intentando en la siguiente captura.');
+        } else if (data.candidates?.length === 1) {
+          setOcrMessage('Lectura dudosa; el OCR continuará intentando con la siguiente captura.');
+        } else {
+          setOcrMessage('No se pudo leer la placa. El lector continúa revisando la fila de carros.');
+        }
+        return;
+      }
+
+      setOcrMessage(`Placa detectada: ${plateCandidate}. Registrando lectura…`);
+      await searchPlate(plateCandidate);
+    } catch (err) {
+      if (currentGeneration !== generation.current) return;
+      previousReading.current = null;
+      setOcrConfidence(null);
+      setOcrMessage(err.response?.data?.error || 'No se pudo conectar con el lector local.');
+    } finally {
+      inFlight.current = false;
+      setSearching(false);
+    }
+  }, [searching, confirming, cropCenter, searchPlate, result.plate]);
+
+  useEffect(() => {
+    if (!cameraActive) return;
+    const interval = setInterval(() => captureAndRecognize(), 2000);
+    return () => clearInterval(interval);
+  }, [cameraActive, captureAndRecognize]);
+
+  const toggleCamera = () => {
+    generation.current += 1;
+    previousReading.current = null;
+    setOcrMessage('');
+    setOcrConfidence(null);
+    setCameraActive(true);
+  };
+
+  const confirmExit = async (authorized, currentResult = result) => {
+    await registerAccessEvent(authorized, currentResult);
   };
   const allStudents = [
     ...(result.vehicle?.students?.map(vs => ({ ...vs.student, isTemp: false })) || []),
@@ -180,13 +177,13 @@ export default function GatePage() {
       </div>
 
       <div className="grid-2">
-        {/* Left: Camera / Input */}
+        {/* Left: Automatic camera reader */}
         <div className="card">
-          <h3 style={{ marginBottom: 16 }}>Capturar placa</h3>
+          <h3 style={{ marginBottom: 16 }}>Lectura automática de placas</h3>
 
           <div style={{ marginBottom: 16 }}>
-            <button className={`btn ${cameraActive ? 'btn-ghost' : 'btn-primary'}`} onClick={toggleCamera} disabled={confirming}>
-              {cameraActive ? 'Apagar cámara' : 'Activar cámara'}
+            <button className="btn btn-ghost" onClick={toggleCamera} disabled={confirming || cameraActive}>
+              Cámara activa
             </button>
           </div>
 
@@ -211,14 +208,9 @@ export default function GatePage() {
                 />
                 {cropCenter && <div style={{ position: 'absolute', left: '10%', top: '30%', width: '80%', height: '40%', border: '2px dashed #22c55e', pointerEvents: 'none' }} />}
               </div>
-              <button
-                className="btn btn-primary"
-                style={{ marginTop: 10, width: '100%', justifyContent: 'center' }}
-                onClick={() => captureAndRecognize(false)}
-                disabled={searching}
-              >
-                {searching ? <><span className="spinner" style={{ borderTopColor: '#fff' }} /> Procesando...</> : 'Capturar y leer placa'}
-              </button>
+              <p style={{ fontSize: 13, marginTop: 10 }}>
+                {searching ? 'Leyendo placa…' : result.plate ? 'Vehículo identificado. Confirma la acción para continuar.' : 'Lectura automática activa. Coloca la placa frente a la cámara.'}
+              </p>
 
             </div>
           )}
@@ -227,33 +219,7 @@ export default function GatePage() {
           {ocrConfidence && <p style={{ fontSize: 12, color: 'var(--gray-500)', marginBottom: 12 }}>
             Puntuación del lector: {ocrConfidence.value}/100 — {ocrConfidence.text === 'high' ? 'Alta' : ocrConfidence.text === 'medium' ? 'Media' : 'Baja'}
           </p>}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <div className="form-group" style={{ flex: 1 }}>
-              <label className="form-label">Ingresar placa manualmente</label>
-              <input
-                className="form-input"
-                placeholder="ABC123"
-                value={manualPlate}
-                onChange={(e) => {
-                  generation.current += 1;
-                  previousReading.current = null;
-                  setCameraActive(false);
-                  setManualPlate(e.target.value.toUpperCase());
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && !searching && !confirming && searchPlate(manualPlate)}
-                maxLength={7}
-                style={{ fontFamily: 'monospace', fontSize: 18, letterSpacing: 3, fontWeight: 700 }}
-              />
-            </div>
-            <button
-              className="btn btn-primary"
-              onClick={() => searchPlate(manualPlate)}
-              disabled={searching || confirming || !manualPlate}
-              style={{ marginBottom: 1 }}
-            >
-              {searching ? <span className="spinner" style={{ borderTopColor: '#fff' }} /> : 'Buscar'}
-            </button>
-          </div>
+
         </div>
 
         {/* Right: Result */}
@@ -263,16 +229,16 @@ export default function GatePage() {
           {!result.plate ? (
             <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--gray-500)' }}>
               <p style={{ fontSize: 40, marginBottom: 8 }}>⬡</p>
-              <p>Captura o ingresa una placa para verificar</p>
+              <p>Activa la cámara y coloca la placa frente al lector</p>
             </div>
           ) : !result.found ? (
             <div style={{ textAlign: 'center', padding: '24px 0' }}>
               <span className="plate-display" style={{ marginBottom: 16, display: 'block' }}>{result.plate}</span>
               <span className="badge badge-danger" style={{ fontSize: 14, padding: '6px 16px' }}>Vehículo NO registrado</span>
               <p style={{ color: 'var(--gray-500)', fontSize: 13, marginTop: 12 }}>Este vehículo no tiene autorización en el sistema.</p>
-              <button className="btn btn-danger" style={{ marginTop: 16, width: '100%', justifyContent: 'center' }} onClick={() => confirmExit(false)} disabled={confirming}>
+              {/* <button className="btn btn-danger" style={{ marginTop: 16, width: '100%', justifyContent: 'center' }} onClick={() => confirmExit(false)} disabled={confirming}>
                 Registrar acceso denegado
-              </button>
+              </button> */}
             </div>
           ) : (
             <div>

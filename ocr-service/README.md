@@ -65,17 +65,18 @@ web necesita localhost o HTTPS cuando se accede desde otro equipo.
 - Activa la cámara y procura que los caracteres se vean grandes y enfocados.
 - **Leer solo la zona central** recorta realmente la imagen al rectángulo mostrado.
 - La consulta automática exige dos lecturas consecutivas coincidentes separadas
-  por no más de 15 segundos. El botón de captura permite una lectura individual.
+  por no más de 15 segundos. No se necesita escribir la placa ni pulsar Buscar.
 - Verifica vehículo y estudiantes y confirma o deniega la salida. El OCR no crea
   eventos automáticamente.
-- Las lecturas dudosas pausan la cámara y permiten corregir la placa antes de buscar.
+- La web reintenta automáticamente las lecturas dudosas. En móvil, la consulta se
+  realiza al reconocer la foto; si no es legible, se solicita otra foto.
   Una imagen ilegible no se registra como vehículo no autorizado.
 
 Se detectan y rectifican zonas de texto; no se incluye YOLO ni un modelo de placas
 entrenado específicamente para Colombia. No se unen textos distantes ni se toman
 los primeros seis caracteres de cualquier resultado. Se admiten `ABC123` y `ABC12D`.
-Las placas partidas en varios bloques o dos líneas pueden requerir ingreso manual.
-Las correcciones por posición siempre requieren revisión; el último carácter no
+Las placas partidas en varios bloques o dos líneas pueden requerir otro encuadre.
+Las correcciones por posición no se aceptan automáticamente; el último carácter no
 se cambia porque puede ser letra o número. La puntuación no es una probabilidad
 calibrada de identificación correcta del vehículo.
 

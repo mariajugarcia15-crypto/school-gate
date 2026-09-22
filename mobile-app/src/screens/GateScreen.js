@@ -1,7 +1,7 @@
 // src/screens/GateScreen.js
 import { useState, useRef, useContext } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  View, Text, TouchableOpacity, StyleSheet,
   ScrollView, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -15,7 +15,6 @@ export default function GateScreen() {
   const { user } = useContext(AuthContext);
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [manualPlate, setManualPlate] = useState('');
   const [searching, setSearching] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState(null);
@@ -61,7 +60,7 @@ export default function GateScreen() {
         name: 'plate.jpg',
       });
       const ocrRes = await ocrService.recognize(formData);
-      reviewReading(ocrRes.data);
+      await reviewReading(ocrRes.data);
     } catch (err) {
       Alert.alert('Error', err.response?.data?.error || 'No se pudo procesar la imagen');
     } finally {
@@ -81,26 +80,18 @@ export default function GateScreen() {
       const formData = new FormData();
       formData.append('image', { uri: img.assets[0].uri, type: 'image/jpeg', name: 'plate.jpg' });
       const ocrRes = await ocrService.recognize(formData);
-      reviewReading(ocrRes.data);
+      await reviewReading(ocrRes.data);
     } catch (err) { Alert.alert('Error', err.response?.data?.error || 'No se pudo leer la imagen'); }
     finally { setSearching(false); }
   };
 
-  const reviewReading = (data) => {
+  const reviewReading = async (data) => {
     setResult(null);
     if (!data.plate || data.status !== 'recognized') {
-      const candidate = data.candidates?.length === 1 ? data.candidates[0].plate : '';
-      setManualPlate(candidate);
-      Alert.alert('Revisar placa', candidate
-        ? `Lectura dudosa: ${candidate}. Revisa y corrige el campo antes de buscar.`
-        : 'No se pudo identificar una sola placa. Acerca la cámara o ingrésala manualmente.');
+      Alert.alert('No se pudo leer la placa', 'Acerca la cámara, mejora la luz y toma otra foto de un solo vehículo.');
       return;
     }
-    setManualPlate(data.plate);
-    Alert.alert('Placa detectada', `Se detectó: ${data.plate}\n¿Es correcto?`, [
-      { text: 'Corregir', style: 'cancel' },
-      { text: 'Sí, buscar', onPress: () => searchPlate(data.plate) },
-    ]);
+    await searchPlate(data.plate);
   };
 
   const confirmExit = async (authorized) => {
@@ -123,7 +114,6 @@ export default function GateScreen() {
       await logService.create(formData);
       Alert.alert(authorized ? 'Salida confirmada' : 'Acceso denegado', authorized ? 'El registro fue guardado exitosamente.' : 'El acceso denegado fue registrado.');
       setResult(null);
-      setManualPlate('');
     } catch { Alert.alert('Error', 'No se pudo registrar el evento'); }
     finally { setConfirming(false); }
   };
@@ -173,28 +163,8 @@ export default function GateScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Manual input */}
-      <View style={styles.card}>
-        <Text style={styles.label}>Ingresar placa manualmente</Text>
-        <View style={styles.row}>
-          <TextInput
-            style={[styles.plateInput, { flex: 1, marginRight: 10 }]}
-            value={manualPlate}
-            onChangeText={t => setManualPlate(t.toUpperCase())}
-            placeholder="ABC123"
-            maxLength={7}
-            autoCapitalize="characters"
-            onSubmitEditing={() => searchPlate(manualPlate)}
-          />
-          <TouchableOpacity
-            style={[styles.btn, { paddingHorizontal: 20 }]}
-            onPress={() => searchPlate(manualPlate)}
-            disabled={searching || !manualPlate}
-          >
-            {searching ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.btnText}>Buscar</Text>}
-          </TouchableOpacity>
-        </View>
-      </View>
+      <Text style={styles.hint}>La placa se leerá y consultará automáticamente al tomar una foto o elegir una imagen.</Text>
+      {searching && <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 12 }} />}
 
       {/* Result */}
       {result && (
@@ -280,7 +250,6 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#e5e7eb' },
   row: { flexDirection: 'row', alignItems: 'center' },
   label: { fontSize: 13, fontWeight: '500', color: '#374151', marginBottom: 8 },
-  plateInput: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 12, fontSize: 22, fontWeight: '800', letterSpacing: 4, textAlign: 'center', color: '#1a56db', backgroundColor: '#eff6ff' },
   btn: { backgroundColor: '#1a56db', borderRadius: 8, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
   btnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
   badge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
