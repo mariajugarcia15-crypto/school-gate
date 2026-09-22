@@ -1,6 +1,10 @@
 // src/controllers/vehicle.controller.js
 const prisma = require('../lib/prisma');
 
+const normalizeStudentIds = (studentIds) => (
+  studentIds === undefined ? undefined : Array.isArray(studentIds) ? studentIds : [studentIds]
+);
+
 const getAll = async (req, res) => {
   const { search, active } = req.query;
   const vehicles = await prisma.vehicle.findMany({
@@ -63,6 +67,7 @@ tomorrow.setDate(tomorrow.getDate() + 1);
 
 const create = async (req, res) => {
   const { plate, brand, model, color, ownerName, ownerPhone, ownerDni, vehicleType, studentIds } = req.body;
+  const normalizedStudentIds = normalizeStudentIds(studentIds);
   const photoUrl = req.file ? `/uploads/vehicles/${req.file.filename}` : null;
 
   const vehicle = await prisma.vehicle.create({
@@ -71,8 +76,8 @@ const create = async (req, res) => {
       brand, model, color, ownerName, ownerPhone, ownerDni,
       vehicleType: vehicleType || 'CAR',
       photoUrl,
-      students: studentIds?.length
-        ? { create: studentIds.map((id) => ({ studentId: id, isMain: true })) }
+      students: normalizedStudentIds?.length
+        ? { create: normalizedStudentIds.map((id) => ({ studentId: id, isMain: true })) }
         : undefined,
     },
     include: { students: { include: { student: true } } },
@@ -82,6 +87,7 @@ const create = async (req, res) => {
 
 const update = async (req, res) => {
   const { plate, brand, model, color, ownerName, ownerPhone, ownerDni, vehicleType, active, studentIds } = req.body;
+  const normalizedStudentIds = normalizeStudentIds(studentIds);
   const photoUrl = req.file ? `/uploads/vehicles/${req.file.filename}` : undefined;
 
   const data = {
@@ -97,9 +103,9 @@ const update = async (req, res) => {
     ...(photoUrl && { photoUrl }),
   };
 
-  if (studentIds) {
+  if (normalizedStudentIds !== undefined) {
     await prisma.vehicleStudent.deleteMany({ where: { vehicleId: req.params.id } });
-    data.students = { create: studentIds.map((id) => ({ studentId: id, isMain: true })) };
+    data.students = { create: normalizedStudentIds.map((id) => ({ studentId: id, isMain: true })) };
   }
 
   const vehicle = await prisma.vehicle.update({
