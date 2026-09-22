@@ -157,7 +157,7 @@ export default function GatePage() {
     previousReading.current = null;
     setOcrMessage('');
     setOcrConfidence(null);
-    setCameraActive(true);
+    setCameraActive(active => !active);
   };
 
   const confirmExit = async (authorized, currentResult = result) => {
@@ -182,8 +182,8 @@ export default function GatePage() {
           <h3 style={{ marginBottom: 16 }}>Lectura automática de placas</h3>
 
           <div style={{ marginBottom: 16 }}>
-            <button className="btn btn-ghost" onClick={toggleCamera} disabled={confirming || cameraActive}>
-              Cámara activa
+            <button className={`btn ${cameraActive ? 'btn-ghost' : 'btn-primary'}`} onClick={toggleCamera} disabled={confirming}>
+              {cameraActive ? 'Cámara activa' : 'Activar cámara'}
             </button>
           </div>
 
